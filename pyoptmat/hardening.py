@@ -1358,7 +1358,7 @@ class NeuralNetHardeningModel(IsotropicHardeningModel):
             Returns:
             - torch.tensor       :     derivative of the history w.r.t. stress
         """        
-        full_jac = grad_F.jacobian(lambda x: self.history_rate(x, h, t, ep, T), s, create_graph = True)        
+        full_jac = grad_F.jacobian(lambda x: self.history_rate(x, h, t, ep, T), s,)        
         correct_jac = torch.empty((s.shape[0]), 1)        
         for i in range(s.shape[0]): 
             correct_jac[i] = full_jac[i, :, i]            
@@ -1376,7 +1376,7 @@ class NeuralNetHardeningModel(IsotropicHardeningModel):
             Returns:
               torch.tensor       :     derivative with respect to history
         """
-        full_jac = grad_F.jacobian(lambda x: self.forward(s, x, t, ep, T), h, create_graph = True)        
+        full_jac = grad_F.jacobian(lambda x: self.forward(s, x, t, ep, T), h,)        
         correct_jac = torch.empty((h.shape[0], 1, 1))
         for i in range(h.shape[0]): 
             correct_jac[i] = full_jac[i, :, i, :]                 
@@ -1396,7 +1396,7 @@ class NeuralNetHardeningModel(IsotropicHardeningModel):
             Returns:
             - torch.tensor       :     derivative with respect to inelastic strain rate
         """
-        full_jac = grad_F.jacobian(lambda x: self.forward(s, h, t, x, T), ep, create_graph = True)                
+        full_jac = grad_F.jacobian(lambda x: self.forward(s, h, t, x, T), ep,)                
         correct_jac = torch.empty((ep.shape[0]), 1, 1)
         for i in range(ep.shape[0]): 
             correct_jac[i] = full_jac[i, :, i]        
