@@ -1123,3 +1123,281 @@ class SuperimposedKinematicHardening(KinematicHardeningModel):
             dhr[:, o : o + n] = model.dhistory_rate_derate(s, h[:, o : o + n], t, ep, T)
 
         return dhr
+      
+      
+      
+class LinearHardeningModel(IsotropicHardeningModel):
+    # implements linear hardening
+    def __init__(self, kappa):
+        super().__init__()
+        self.kappa = kappa
+        
+    def value(self, h):
+        """
+            Map internal variables to the value of the isotropic hardening.
+            
+            Args:
+            - h (torch.tensor):    vector of internal variables for this model
+            
+            Return:
+            - torch.tensor:        tensor of the isotropic hardening value
+        
+        """ 
+        return h[:,0]
+    
+    def dvalue(self, h):
+        """
+            Map a vector of internal variables to the isotropic hardening value.
+            
+            Args: 
+            - h (torch.tensor):    vector of internal variables in this model.
+            
+            Return:
+            - torch.tensor:        isotropic hardening value
+            
+        """
+        return torch.ones((h.shape[0], 1), device = h.device)
+    
+    @property
+    def nhist(self):
+        
+        """
+            Returns the number of internal variables
+        """
+        return 1
+    
+    def history_rate(self, s, h, t, ep, T):
+        
+        """
+            The rate evolving the internal variables.
+
+            Internal variables   :
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+        """
+        return torch.unsqueeze(self.kappa(T) * torch.abs(ep), 1)
+    
+    def dhistory_rate_dstress(self, s, h, t, ep, T):
+        
+        """
+            The derivative of the history w.r.t stress
+            
+            Parameters:
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            
+            Returns:
+            - torch.tensor       :     derivative of the history w.r.t. stress
+        
+        """
+        return torch.zeros_like(h)
+      
+    def dhistory_rate_dhistory(self, s, h, t, ep, T):  
+       
+        """
+            The derivative of the history rate with respect to the internal variables
+
+            Parameters:
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            Returns:
+              torch.tensor       :     derivative with respect to history
+
+        """
+        return torch.unsqueeze(torch.unsqueeze(torch.tensor(self.kappa(T)), -1) * torch.zeros_like(h) * torch.abs(ep)[:, None], 1)
+    
+    def dhistory_rate_derate(self, s, h, t, ep, T):
+        
+        """
+            The derivative of the history rate with respect to the inelastic strain rate
+            
+            Parameters: 
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            
+            Returns:
+            - torch.tensor       :     derivative with respect to inelastic strain rate
+        
+        """
+        return torch.unsqueeze(torch.unsqueeze(self.kappa(T) * torch.sign(ep), 1), 1)
+      
+class NeuralNetHardeningModel(IsotropicHardeningModel):
+    # implements any arbitrary hardening using a neural net
+    def __init__(self, weight, bias, weight_last, bias_last):
+        super().__init__()
+        self.weight = weight
+        self.bias = bias
+        self.weight_last = weight_last
+        self.bias_last = bias_last
+        self.nn = nn.Sequential(       
+                nn.Linear(3, 3),
+                nn.ReLU(),
+                nn.Linear(3, 3),
+                nn.ReLU(),
+                nn.Linear(3, 3),
+                nn.ReLU(),
+                nn.Linear(3, 1)
+            )
+        if len(weight.shape) == 3:
+            with torch.no_grad():
+                self.nn[0].weight = nn.Parameter(weight[0])
+                self.nn[0].bias = nn.Parameter(bias[0])
+                self.nn[2].weight = nn.Parameter(weight[1])
+                self.nn[2].bias = nn.Parameter(bias[1])
+                self.nn[4].weight = nn.Parameter(weight[2])
+                self.nn[4].bias = nn.Parameter(bias[2])
+                self.nn[6].weight = nn.Parameter(weight_last)
+                self.nn[6].bias = nn.Parameter(bias_last)
+        else:
+            for i in range(weight.shape[0]):
+                with torch.no_grad():
+                    self.nn[0].weight = nn.Parameter(weight[i][0])
+                    self.nn[0].bias = nn.Parameter(bias[i][0])
+                    self.nn[2].weight = nn.Parameter(weight[i][1])
+                    self.nn[2].bias = nn.Parameter(bias[i][1])
+                    self.nn[4].weight = nn.Parameter(weight[i][2])
+                    self.nn[4].bias = nn.Parameter(bias[i][2])
+                    self.nn[6].weight = nn.Parameter(weight_last[i])
+                    self.nn[6].bias = nn.Parameter(bias_last[i])
+
+    def forward(self, s, h, t, ep, T):
+        if len(s.shape) == 0 and len(self.weight[0].shape) == 3:
+            s_eval = torch.flatten(s)
+            h_eval = torch.flatten(h)
+            ep_eval = torch.flatten(ep)
+            y = torch.stack((s_eval, h_eval, ep_eval), 1)
+            y = torch.squeeze(y)
+            y1 = self.nn(y)
+            y1 = torch.abs(y1)
+            return y1
+ 
+        elif len(s.shape) != 0 and len(self.weight[0].shape) == 3:
+            for i in range(s.shape[0]): 
+                s_eval = torch.flatten(s)
+                h_eval = torch.flatten(h)
+                ep_eval = torch.flatten(ep)
+                y = torch.stack((s_eval, h_eval, ep_eval), 1)
+                y1 = self.nn(y)
+                y1 = torch.abs(y1)         
+            return y1        
+
+        else:           
+            y1 = torch.empty((s.shape[0], 1))
+            for i in range(s.shape[0]):
+                s_eval = torch.flatten(s)
+                h_eval = torch.flatten(h)
+                ep_eval = torch.flatten(ep)
+                y = torch.stack((s_eval, h_eval, ep_eval), 1)
+                y1 = self.nn(y)
+                y1 = torch.abs(y1)
+            return y1
+
+    def value(self, h):
+        """
+            Map internal variables to the value of the isotropic hardening.
+            Parameters:
+            - h (torch.tensor):    vector of internal variables for this model
+            Return:
+            - torch.tensor    :    tensor of the isotropic hardening value
+        """
+        return h[:,0]
+
+    def dvalue(self, h):
+        
+        """
+            Map a vector of internal variables to the isotropic hardening value.
+            Parameters:
+            - h (torch.tensor):    vector of internal variables in this model.
+            Return:
+            - torch.tensor    :    isotropic hardening value
+        """
+        return torch.ones((h.shape[0], 1), device = h.device)
+
+    @property
+    def nhist(self):
+        """
+            Returns the number of internal variables
+        """
+        return 1
+    
+    def history_rate(self, s, h, t, ep, T):
+        """
+            The rate evolving the internal variables.
+            Internal variables   :
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+        """
+
+        return self.forward(s, h, t, ep, T)
+    
+    def dhistory_rate_dstress(self, s, h, t, ep, T):
+        
+        """
+            The derivative of the history w.r.t stress
+            Parameters:
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            Returns:
+            - torch.tensor       :     derivative of the history w.r.t. stress
+        """        
+        full_jac = grad_F.jacobian(lambda x: self.history_rate(x, h, t, ep, T), s, create_graph = True)        
+        correct_jac = torch.empty((s.shape[0]), 1)        
+        for i in range(s.shape[0]): 
+            correct_jac[i] = full_jac[i, :, i]            
+        return correct_jac
+    
+    def dhistory_rate_dhistory(self, s, h, t, ep, T):  
+        """
+            The derivative of the history rate with respect to the internal variables
+            Parameters:
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            Returns:
+              torch.tensor       :     derivative with respect to history
+        """
+        full_jac = grad_F.jacobian(lambda x: self.forward(s, x, t, ep, T), h, create_graph = True)        
+        correct_jac = torch.empty((h.shape[0], 1, 1))
+        for i in range(h.shape[0]): 
+            correct_jac[i] = full_jac[i, :, i, :]                 
+        return correct_jac
+    
+    def dhistory_rate_derate(self, s, h, t, ep, T):
+        """
+            The derivative of the history rate with respect to the inelastic strain rate
+            
+            Parameters: 
+            - s (torch.tensor)   :     stress
+            - h (torch.tensor)   :     history
+            - t (torch.tensor)   :     time
+            - ep (torch.tensor)  :     inelastic strain rate
+            - T (torch.tensor)   :     temperature
+            
+            Returns:
+            - torch.tensor       :     derivative with respect to inelastic strain rate
+        """
+        full_jac = grad_F.jacobian(lambda x: self.forward(s, h, t, x, T), ep, create_graph = True)                
+        correct_jac = torch.empty((ep.shape[0]), 1, 1)
+        for i in range(ep.shape[0]): 
+            correct_jac[i] = full_jac[i, :, i]        
+        return correct_jac
