@@ -1,4 +1,4 @@
-# pylint: disable=abstract-method, no-self-use, useless-super-delegation, too-many-lines, duplicate-code
+a# pylint: disable=abstract-method, no-self-use, useless-super-delegation, too-many-lines, duplicate-code
 
 """
   Modules defining isotropic and kinematic hardening models.
@@ -1342,8 +1342,9 @@ class NeuralNetHardeningModel(IsotropicHardeningModel):
             - ep (torch.tensor)  :     inelastic strain rate
             - T (torch.tensor)   :     temperature
         """
-
-        return self.forward(s, h, t, ep, T)
+        # torch.abs(self.forward(s, h, t, T)) * torch.abs(ep)
+        
+        return torch.abs(self.forward(s, h, t, ep, T))
     
     def dhistory_rate_dstress(self, s, h, t, ep, T):
         
